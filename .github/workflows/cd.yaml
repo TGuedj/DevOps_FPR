@@ -1,0 +1,69 @@
+name: CD
+on:
+  workflow_dispatch:
+    inputs:
+      EC2_IP:
+        description: "The IP address of the Kind EC2 instance"
+        required: true
+
+jobs:
+  Deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Store Secrets
+        run: |
+          AWS_LOC_ID=$(echo "${{ secrets.AWS_ID }}" | base64 -d)
+          echo $AWS_LOC_ID
+          AWS_LOC_SECRET=$(echo "${{ secrets.AWS_SECRET }}" | base64 -d)
+          echo $AWS_LOC_SECRET
+          sed -i "s|AWS_ID_STUB|$AWS_LOC_ID|" ./k8s-manifests/deployment.yaml
+          sed -i "s|AWS_SECRET_STUB|$AWS_LOC_SECRET|" ./k8s-manifests/deployment.yaml
+
+      # - name: Create Kubernetes Secret
+      #   env:
+      #     AWS_ID: ${{ secrets.AWS_ID }}
+      #     AWS_SECRET: ${{ secrets.AWS_SECRET }}
+      #   run: |
+      #     kubectl create secret generic aws-secret --from-literal=AWS_ID=${AWS_ID} --from-literal=AWS_SECRET=${AWS_SECRET} --namespace pyui
+
+      - name: Copy Repo to Kind EC2
+        run: |
+          # Save the SSH private key to a file
+          echo "${{ secrets.SSH_KEY }}" > key.pem
+          chmod 400 key.pem
+
+          # Use rsync to copy the repository, excluding key.pem
+          rsync -avz -e "ssh -i key.pem -o StrictHostKeyChecking=no" --exclude 'key.pem' ./ ec2-user@${{ inputs.EC2_IP }}:~/repo
+
+      - name: Deploy to kind Cluster
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          AWS_ID: ${{ secrets.AWS_ID }}
+          AWS_SECRET: ${{ secrets.AWS_SECRET }}
+        with:
+          host: ${{ inputs.EC2_IP }}
+          username: ec2-user
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          envs: AWS_ID, AWS_SECRET
+          script: |
+            cd ~/repo/k8s-manifests
+            AWS_LOC_ID=$(echo "$AWS_ID" | base64 -d)
+            echo $AWS_LOC_ID
+            AWS_LOC_SECRET=$(echo "$AWS_SECRET" | base64 -d)
+            echo $AWS_LOC_SECRET
+            kubectl create ns pyui || true
+            kubectl create secret generic aws-secret --from-literal=AWS_ID=${AWS_ID} --from-literal=AWS_SECRET=${AWS_SECRET} --namespace pyui
+            # Apply all manifests
+            kubectl apply -f configmap.yaml
+            kubectl apply -f storageclass.yaml
+            kubectl apply -f PersistentVolumes.yaml
+            kubectl apply -f PersistentVolumeClaim.yaml
+            kubectl apply -f StatefulSet.yaml
+            kubectl apply -f service_mysql.yaml
+            kubectl apply -f deployment.yaml
+            kubectl apply -f service.yaml

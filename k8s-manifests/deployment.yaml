@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-app
+  namespace: pyui
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: python-app
+  template:
+    metadata:
+      labels:
+        app: python-app
+    spec:
+      containers:
+      - name: python-app
+        image: rr1docker1/final-proj-app:v3
+        env:
+        - name: AWS_ID
+          value: "AWS_ID_STUB"
+          # valueFrom:
+            # secretKeyRef:
+            #   name: aws-secret
+            #   key: AWS_ID
+        - name: AWS_SECRET
+          value: "AWS_SECRET_STUB"
+          # valueFrom:
+          #   secretKeyRef:
+          #     name: aws-secret
+          #     key: AWS_SECRET
+        ports:
+        - containerPort: 5000
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.json
+          subPath: config.json
+      volumes:
+      - name: config-volume
+        configMap:
+          name: app-config
